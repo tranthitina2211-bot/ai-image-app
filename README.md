@@ -8,61 +8,99 @@ Backend Laravel cho hệ thống tạo ảnh AI sử dụng ComfyUI.
 - MySQL
 - Queue Jobs
 - Broadcasting
+- ComfyUI
+
+## Yêu cầu môi trường
+
+- PHP 8.2+
+- Composer
+- MySQL
+- Node.js (nếu build assets)
 
 ## Cài đặt
 
+Clone repo và chạy:
+
 ```bash
 composer install
+
+
+Tạo file .env
+
 cp .env.example .env
+
+Tạo key ứng dụng:
+
 php artisan key:generate
+
+Cấu hình database trong .env
+
+Sau đó migrate database:
+
 php artisan migrate
-````
-
-## Chạy server
-
-```bash
+Chạy server
 php artisan serve
-```
 
-## Chạy queue worker
+Server mặc định chạy tại:
 
-```bash
+http://127.0.0.1:8000
+Chạy queue worker
+
+Hệ thống generate sử dụng queue job nên cần chạy worker:
+
 php artisan queue:work
-```
 
-## Storage
+Bạn nên mở terminal thứ hai để chạy worker.
 
-Tạo symbolic link:
+Storage
 
-```bash
+Tạo symbolic link để truy cập file media:
+
 php artisan storage:link
-```
-
-## Luồng generate
-
-1. frontend gửi request generate
-2. backend tạo generation job
-3. queue worker gửi workflow sang ComfyUI
-4. backend polling kết quả
-5. lưu media vào storage
-6. frontend hiển thị media
-
-## API
+API
 
 Base URL:
 
-```
 http://127.0.0.1:8000/api
-```
+Luồng generate
 
-````
+Frontend gửi request generate
+
+Backend tạo generation job
+
+Queue worker gửi workflow sang ComfyUI
+
+Backend polling kết quả
+
+Lưu media vào storage
+
+Frontend hiển thị kết quả
+
+Debug
+
+Xem log Laravel tại:
+
+storage/logs/laravel.log
+Lưu ý
+
+Khi chạy local cần đảm bảo:
+
+ComfyUI đang chạy
+
+Queue worker đang chạy
+
+Database đã migrate
+
 
 ---
 
-## Commit
+# 4️⃣ Lưu file
+
+---
+
+# 5️⃣ Commit và push
+
+Trong terminal backend chạy:
 
 ```bash
-git add README.md
-git commit -m "rewrite backend README"
-git push
-````
+git status
