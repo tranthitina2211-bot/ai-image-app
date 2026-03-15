@@ -13,6 +13,7 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class GenerateImageJob implements ShouldQueue
@@ -26,7 +27,15 @@ class GenerateImageJob implements ShouldQueue
     public function handle(ComfyUiService $comfyUiService, GenerationService $generationService): void
     {
         $job = GenerationJob::query()->with(['mediaItems', 'stack', 'parentMediaItem'])->findOrFail($this->jobId);
+
+        Log::info('GenerateImageJob started', [
+            'job_id' => $this->jobId,
+        ]);
+
         if ($job->status === 'cancelled') {
+            Log::info('GenerateImageJob skipped because job was cancelled', [
+                'job_id' => $this->jobId,
+            ]);
             return;
         }
 
@@ -35,12 +44,24 @@ class GenerateImageJob implements ShouldQueue
             'progress' => 5,
             'started_at' => now(),
         ]);
+
         $job->mediaItems()->update(['status' => 'processing', 'progress' => 5]);
         $generationService->logEvent($job, 'started', 'Worker started processing');
         broadcast(new JobProgressUpdated($job->id, ['status' => 'generating', 'progress' => 5]));
 
+        Log::info('Sending workflow to ComfyUI', [
+            'job_id' => $job->id,
+        ]);
+
         $provider = $comfyUiService->queueJob($job);
         $providerJobId = $provider['provider_job_id'] ?? null;
+
+        Log::info('ComfyUI queue response received', [
+            'job_id' => $job->id,
+            'provider_job_id' => $providerJobId,
+            'provider_response' => $provider,
+        ]);
+
         if (! $providerJobId) {
             throw new RuntimeException('ComfyUI did not return a prompt_id.');
         }
@@ -54,20 +75,35 @@ class GenerateImageJob implements ShouldQueue
         for ($attempt = 1; $attempt <= 180; $attempt++) {
             sleep(2);
             $job->refresh();
+
             if ($job->status === 'cancelled') {
+                Log::info('GenerateImageJob stopped during polling because job was cancelled', [
+                    'job_id' => $job->id,
+                    'provider_job_id' => $providerJobId,
+                    'attempt' => $attempt,
+                ]);
                 return;
             }
 
             $history = $comfyUiService->fetchHistory($providerJobId);
+
+            Log::info('Polling ComfyUI history', [
+                'job_id' => $job->id,
+                'provider_job_id' => $providerJobId,
+                'attempt' => $attempt,
+            ]);
+
             $status = data_get($history, $providerJobId . '.status', []);
             $completed = (bool) data_get($status, 'completed', false);
 
             $messages = data_get($status, 'messages', []);
             $messageProgress = null;
+
             foreach ($messages as $message) {
                 if (($message[0] ?? null) === 'progress') {
                     $value = data_get($message, '1.value');
                     $max = data_get($message, '1.max');
+
                     if (is_numeric($value) && is_numeric($max) && (float) $max > 0) {
                         $messageProgress = (int) floor(((float) $value / (float) $max) * 85) + 10;
                     }
@@ -88,7 +124,18 @@ class GenerateImageJob implements ShouldQueue
             }
 
             if ($completed) {
+                Log::info('ComfyUI reported completed', [
+                    'job_id' => $job->id,
+                    'provider_job_id' => $providerJobId,
+                ]);
+
                 $result = $comfyUiService->extractResultFromHistory($providerJobId, $history);
+
+                Log::info('ComfyUI result extracted', [
+                    'job_id' => $job->id,
+                    'result' => $result,
+                ]);
+
                 break;
             }
         }
@@ -98,7 +145,19 @@ class GenerateImageJob implements ShouldQueue
         }
 
         $media = $job->mediaItems()->firstOrFail();
+
+        Log::info('Resolving ComfyUI output path', [
+            'job_id' => $job->id,
+            'result' => $result,
+        ]);
+
         $sourcePath = $comfyUiService->resolveOutputAbsolutePath($result);
+
+        Log::info('Resolved output path', [
+            'job_id' => $job->id,
+            'source_path' => $sourcePath,
+        ]);
+
         if (! File::exists($sourcePath)) {
             throw new RuntimeException('ComfyUI output file not found: ' . $sourcePath);
         }
@@ -106,8 +165,17 @@ class GenerateImageJob implements ShouldQueue
         $disk = 'public';
         $extension = strtolower(pathinfo($sourcePath, PATHINFO_EXTENSION));
         $relativePath = 'generated/' . $media->id . '.' . $extension;
+
         Storage::disk($disk)->put($relativePath, File::get($sourcePath));
         $url = Storage::disk($disk)->url($relativePath);
+
+        Log::info('Generated file saved to storage', [
+            'job_id' => $job->id,
+            'media_id' => $media->id,
+            'disk' => $disk,
+            'relative_path' => $relativePath,
+            'url' => $url,
+        ]);
 
         $mime = str_starts_with($extension, 'mp') || $extension === 'webm'
             ? ('video/' . ($extension === 'mp4' ? 'mp4' : $extension))
@@ -140,7 +208,16 @@ class GenerateImageJob implements ShouldQueue
             'last_generated_at' => now(),
         ]);
 
-        $generationService->logEvent($job, 'completed', 'Generation completed', ['media_item_id' => $media->id, 'url' => $url]);
+        $generationService->logEvent($job, 'completed', 'Generation completed', [
+            'media_item_id' => $media->id,
+            'url' => $url,
+        ]);
+
+        Log::info('GenerateImageJob completed successfully', [
+            'job_id' => $job->id,
+            'media_id' => $media->id,
+            'url' => $url,
+        ]);
 
         broadcast(new JobProgressUpdated($job->id, [
             'status' => 'done',
@@ -152,6 +229,11 @@ class GenerateImageJob implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
+        Log::error('GenerateImageJob failed', [
+            'job_id' => $this->jobId,
+            'error' => $e->getMessage(),
+        ]);
+
         $job = GenerationJob::query()->with('mediaItems')->find($this->jobId);
         if (! $job) {
             return;
@@ -162,6 +244,7 @@ class GenerateImageJob implements ShouldQueue
             'error_message' => $e->getMessage(),
             'finished_at' => now(),
         ]);
+
         $job->mediaItems()->update([
             'status' => 'error',
             'progress' => $job->progress,
