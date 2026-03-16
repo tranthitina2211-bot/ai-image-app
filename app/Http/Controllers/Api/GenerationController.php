@@ -46,7 +46,11 @@ class GenerationController extends Controller
         ]);
 
         $jobs = $this->generationService->createVariationJobs($user, $media, 4);
-        $jobs->load('mediaItems');
+
+        $jobs = GenerationJob::query()
+            ->whereIn('id', $jobs->pluck('id'))
+            ->with('mediaItems')
+            ->get();
 
         return response()->json([
             'jobs' => $jobs->map(fn ($job) => [
