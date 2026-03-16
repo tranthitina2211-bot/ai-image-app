@@ -66,8 +66,14 @@ class GenerateImageJob implements ShouldQueue
             throw new RuntimeException('ComfyUI did not return a prompt_id.');
         }
 
-        $job->update(['provider_job_id' => $providerJobId]);
+        $job->update([
+            'provider_job_id' => $providerJobId,
+            'progress' => 10,
+        ]);
 
+        $job->mediaItems()->update([
+            'progress' => 10,
+        ]);
         $history = [];
         $result = null;
         $lastProgress = 10;
@@ -241,6 +247,7 @@ class GenerateImageJob implements ShouldQueue
 
         $job->update([
             'status' => 'failed',
+            'progress' => (int) ($job->progress ?? 0),
             'error_message' => $e->getMessage(),
             'finished_at' => now(),
         ]);

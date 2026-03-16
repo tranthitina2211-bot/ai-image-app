@@ -7,7 +7,7 @@ class WorkflowTemplateBuilder
     public static function resolveTemplate(string $action, string $mode): string
     {
         return match ($action) {
-            'generate' => $mode === 'video' ? 'txt2vid_basic.json' : 'txt2img_basic.json',
+            'generate' => $mode === 'video' ? 'txt2vid_basic.json' : 'txt2img_cpu_test.json',
             'variation' => 'img2img_variation.json',
             'upscale' => 'img_upscale.json',
             'image_to_video' => 'img2vid_basic.json',

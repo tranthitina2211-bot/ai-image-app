@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\GenerateStoreRequest;
-use App\Http\Resources\GenerationJobResource;
 use App\Models\GenerationJob;
 use App\Models\MediaItem;
 use App\Services\Generation\GenerationService;
@@ -20,12 +19,19 @@ class GenerationController extends Controller
     public function generate(GenerateStoreRequest $request)
     {
         $user = $request->user();
-        Log::info('Generate create request', ['user_id' => $user->id, 'payload' => $request->validated()]);
+        Log::info('Generate create request', [
+            'user_id' => $user->id,
+            'payload' => $request->validated()
+        ]);
+
         $job = $this->generationService->createGenerateJob($user, $request->validated());
+        $job->load('mediaItems');
 
         return response()->json([
             'jobId' => $job->id,
-            'job' => new GenerationJobResource($job->load('mediaItems')),
+            'status' => $job->status,
+            'progress' => (int) ($job->progress ?? 0),
+            'mediaItemId' => $job->mediaItems->first()?->id,
         ], 201);
     }
 
@@ -33,12 +39,22 @@ class GenerationController extends Controller
     {
         $user = $request->user();
         $media = MediaItem::query()->where('user_id', $user->id)->findOrFail($mediaId);
-        Log::info('Variation x4 request', ['user_id' => $user->id, 'media_id' => $mediaId]);
+
+        Log::info('Variation x4 request', [
+            'user_id' => $user->id,
+            'media_id' => $mediaId
+        ]);
+
         $jobs = $this->generationService->createVariationJobs($user, $media, 4);
+        $jobs->load('mediaItems');
 
         return response()->json([
-            'jobIds' => $jobs->pluck('id')->values(),
-            'jobs' => GenerationJobResource::collection($jobs),
+            'jobs' => $jobs->map(fn ($job) => [
+                'jobId' => $job->id,
+                'status' => $job->status,
+                'progress' => (int) ($job->progress ?? 0),
+                'mediaItemId' => $job->mediaItems->first()?->id,
+            ])->values(),
         ], 201);
     }
 
@@ -46,32 +62,92 @@ class GenerationController extends Controller
     {
         $user = $request->user();
         $media = MediaItem::query()->where('user_id', $user->id)->findOrFail($mediaId);
-        Log::info('Upscale request', ['user_id' => $user->id, 'media_id' => $mediaId]);
+
+        Log::info('Upscale request', [
+            'user_id' => $user->id,
+            'media_id' => $mediaId
+        ]);
+
         $job = $this->generationService->createDerivedJob($user, $media, 'upscale', $media->type);
-        return response()->json(['jobId' => $job->id, 'job' => new GenerationJobResource($job->load('mediaItems'))], 201);
+        $job->load('mediaItems');
+
+        return response()->json([
+            'jobId' => $job->id,
+            'status' => $job->status,
+            'progress' => (int) ($job->progress ?? 0),
+            'mediaItemId' => $job->mediaItems->first()?->id,
+        ], 201);
     }
 
     public function imageToVideo(Request $request, string $mediaId)
     {
         $user = $request->user();
         $media = MediaItem::query()->where('user_id', $user->id)->findOrFail($mediaId);
-        Log::info('Image to video request', ['user_id' => $user->id, 'media_id' => $mediaId]);
+
+        Log::info('Image to video request', [
+            'user_id' => $user->id,
+            'media_id' => $mediaId
+        ]);
+
         $job = $this->generationService->createDerivedJob($user, $media, 'image_to_video', 'video');
-        return response()->json(['jobId' => $job->id, 'job' => new GenerationJobResource($job->load('mediaItems'))], 201);
+        $job->load('mediaItems');
+
+        return response()->json([
+            'jobId' => $job->id,
+            'status' => $job->status,
+            'progress' => (int) ($job->progress ?? 0),
+            'mediaItemId' => $job->mediaItems->first()?->id,
+        ], 201);
     }
 
-    public function status(Request $request, string $jobId): GenerationJobResource
+    public function status(Request $request, string $jobId)
     {
         $user = $request->user();
-        $job = GenerationJob::query()->where('user_id', $user->id)->with('mediaItems')->findOrFail($jobId);
-        return new GenerationJobResource($job);
+
+        $job = GenerationJob::query()
+            ->where('user_id', $user->id)
+            ->with('mediaItems')
+            ->findOrFail($jobId);
+
+        $media = $job->mediaItems->first();
+
+        return response()->json([
+            'jobId' => $job->id,
+            'status' => $job->status,
+            'progress' => (int) ($job->progress ?? 0),
+            'error' => $job->error_message,
+            'providerJobId' => $job->provider_job_id,
+            'startedAt' => optional($job->started_at)?->toISOString(),
+            'finishedAt' => optional($job->finished_at)?->toISOString(),
+            'cancelledAt' => optional($job->cancelled_at)?->toISOString(),
+
+            'mediaItemId' => $media?->id,
+            'resultUrl' => $media?->url,
+            'mediaStatus' => $media?->status,
+            'mediaType' => $media?->type,
+        ]);
     }
 
-    public function cancel(Request $request, string $jobId): GenerationJobResource
+    public function cancel(Request $request, string $jobId)
     {
         $user = $request->user();
         $job = GenerationJob::query()->where('user_id', $user->id)->findOrFail($jobId);
-        Log::info('Cancel request', ['user_id' => $user->id, 'job_id' => $jobId]);
-        return new GenerationJobResource($this->generationService->cancelJob($job)->load('mediaItems'));
+
+        Log::info('Cancel request', [
+            'user_id' => $user->id,
+            'job_id' => $jobId
+        ]);
+
+        $job = $this->generationService->cancelJob($job)->load('mediaItems');
+        $media = $job->mediaItems->first();
+
+        return response()->json([
+            'jobId' => $job->id,
+            'status' => $job->status,
+            'progress' => (int) ($job->progress ?? 0),
+            'error' => $job->error_message,
+            'mediaItemId' => $media?->id,
+            'resultUrl' => $media?->url,
+        ]);
     }
 }
