@@ -148,6 +148,11 @@ class GenerationService
             $this->logEvent($job, 'queued', 'Derived job created', ['media_item_id' => $media->id]);
             Log::info('Derived generation job created', ['job_id' => $job->id, 'action' => $action, 'user_id' => $user->id]);
             GenerateImageJob::dispatch($job->id);
+            broadcast(new JobProgressUpdated($job->id, [
+                'status' => 'queued',
+                'progress' => 7,
+                'mediaItemId' => $media->id,
+            ]));
 
             return $job->fresh(['mediaItems']);
         });

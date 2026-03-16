@@ -42,15 +42,10 @@ class GenerationController extends Controller
 
         Log::info('Variation x4 request', [
             'user_id' => $user->id,
-            'media_id' => $mediaId
+            'media_id' => $mediaId,
         ]);
 
         $jobs = $this->generationService->createVariationJobs($user, $media, 4);
-
-        $jobs = GenerationJob::query()
-            ->whereIn('id', $jobs->pluck('id'))
-            ->with('mediaItems')
-            ->get();
 
         return response()->json([
             'jobs' => $jobs->map(fn ($job) => [
